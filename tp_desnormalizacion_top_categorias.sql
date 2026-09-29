@@ -81,6 +81,18 @@
 -- - Ya existe un precedente en el proyecto (mv_facturacion_categoria_mes,
 --   en objects.sql) con el mismo mecanismo (índice único + REFRESH
 --   CONCURRENTLY), solo que agrupado por mes en vez de por día.
+--
+-- Relación lectura/escritura del dato (pregunta 2 de la guía metodológica
+-- de la cátedra, material "Esquemas Heredados", Sección 6): el panel de
+-- administración consulta este reporte "muchas veces por minuto" (dato
+-- del enunciado), mientras que detalle_pedido se escribe con la
+-- frecuencia normal de altas de pedidos del sistema — un orden de
+-- magnitud menor a las lecturas del panel, no un flujo de escritura
+-- masivo y constante. Con lecturas muchísimo más frecuentes que las
+-- escrituras, el dato es buen candidato a desnormalizar: el costo de
+-- mantener la vista actualizada (un REFRESH periódico) se paga muchas
+-- menos veces que el ahorro que genera en cada lectura evitada del JOIN
+-- completo.
 
 
 -- ============================================================
