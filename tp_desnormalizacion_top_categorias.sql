@@ -4,7 +4,7 @@
 -- Autor: Mariano Chirino
 -- Corre sobre: copia_trabajo (carga_masiva.sql + indices_semana3.sql ya aplicados)
 -- Protocolo aplicado: ver protocolo_seguridad.md, Pasos 3, 4 y 7.
--- Evidencia: capturas mariano/explain_antes.txt y explain_despues.txt
+-- Evidencia: capturas/explain_antes.txt y explain_despues.txt
 -- ============================================================
 
 
@@ -31,7 +31,7 @@ ANALYZE pedido;
 -- ============================================================
 -- Ejecutada 3 veces seguidas; se reporta la tercera (caché caliente:
 -- todos los bloques salen de shared buffers, sin lecturas de disco).
--- Plan completo en capturas mariano/explain_antes.txt
+-- Plan completo en capturas/explain_antes.txt
 
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT c.nombre AS categoria,
@@ -150,7 +150,7 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ventas_categoria_dia;
 -- Reemplaza los 3 JOIN de la consulta original por una lectura directa de
 -- la vista materializada, ya agregada por categoría y fecha.
 -- Ejecutada 3 veces seguidas; se reporta la tercera (caché caliente).
--- Plan completo en capturas mariano/explain_despues.txt
+-- Plan completo en capturas/explain_despues.txt
 
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT categoria,

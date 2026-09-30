@@ -61,13 +61,13 @@ HAVING COUNT(DISTINCT deposito_id) > 1;
 ### Anomalías detectadas sobre la instancia de ejemplo
 
 1. **Anomalía de Inserción:**
-   No es posible registrar un nuevo responsable de control y su depósito asignado (ej. responsable `803` en depósito `32`) sin asignarle simultáneamente un lote (`lote_id`), ya que `lote_id` forma parte de la clave primaria original y no admite valores nulos (`NULL`).
+   No es posible registrar un nuevo responsable de control y su depósito asignado (ej. responsable `803` perteneciente al depósito `31`) sin asignarle simultáneamente un lote (`lote_id`), ya que `lote_id` forma parte de la clave primaria original y no admite valores nulos (`NULL`).
 
 2. **Anomalía de Borrado:**
-   Si se eliminan las inspecciones de los lotes `501` y `502` (`(501, 30, 801)` y `(502, 30, 801)`), se borran todas las referencias al responsable `801`, perdiendo de la base de datos el dato maestro de que el responsable `801` pertenece al depósito `30`.
+   El responsable `802` aparece en una sola fila, `(503, 31, 802)`. Si se borra esa fila (por ejemplo, porque el lote `503` se cancela), se pierde el único registro de que `802` pertenece al depósito `31`: un dato de personal se borra como efecto colateral de un dato de logística.
 
 3. **Anomalía de Actualización:**
-   Si el responsable `801` cambia del depósito `30` al `32`, se deben actualizar múltiples filas en la tabla. Si una actualización falla o queda incompleta, la base de datos quedará en un estado inconsistente donde `801` figurará asignado a dos depósitos distintos.
+   Si el responsable `801` cambia del depósito `30` al `32`, se deben actualizar las dos filas en que aparece, `(501, 30, 801)` y `(502, 30, 801)`. Si una actualización falla o queda incompleta, la base de datos quedará en un estado inconsistente donde `801` figurará asignado a dos depósitos distintos.
 
 ---
 
@@ -88,29 +88,32 @@ Aplicando el algoritmo de descomposición sin pérdida sobre la dependencia viol
    - FK: `lote_id REFERENCES lote(id)`, `responsable_control_id REFERENCES responsable_deposito(responsable_control_id)`
 
 3. **Vista de compatibilidad:**
-   - Nombre: `v_control_lote_almacen` (o la misma `control_lote_almacen` tras renombrar la tabla original) que realiza un `NATURAL JOIN` o `JOIN` por `responsable_control_id` para reconstruir exactamente la relación original.
+   - Nombre: `v_control_lote_almacen`, vista aparte; la tabla original `control_lote_almacen` no se renombra ni se toca.
+   - Definición: `NATURAL JOIN` entre `control_lote` y `responsable_deposito` (única columna común: `responsable_control_id`) para reconstruir exactamente la relación original.
 
 ## 5. Plan de migración (expandir–migrar–verificar–contraer)
 
 1. Crear tablas maestras soporte `lote` y `deposito` (si no existen) y la tabla original `control_lote_almacen` con la instancia de ejemplo (3 filas).
-2. Crear las nuevas tablas resultantes `responsable_deposito` y `control_lote` (`up.sql`).
+2. Crear las nuevas tablas resultantes `responsable_deposito` y `control_lote` (sección 4 del script, "up").
 3. Migrar los datos desde `control_lote_almacen` hacia las dos tablas nuevas sin destruir la tabla original.
 4. Crear la vista de compatibilidad.
 5. Verificar la integridad y equivalencia exacta utilizando conteos y **los dos `EXCEPT`** en ambas direcciones.
-6. Probar el script de reversión (`down.sql`).
+6. Probar el script de reversión (bloque "down" de la sección 8 del script): ejecutar el down, verificar que desaparecen la vista y las dos tablas, y volver a correr el script completo (up → down → up).
 
 ## 6. Criterios de aceptación
 
-- [ ] `COUNT(*)` coincide entre la relación original y la reconstruida por la vista.
-- [ ] Los dos `EXCEPT` (original `EXCEPT` vista y vista `EXCEPT` original) devuelven 0 filas.
-- [ ] La unión entre las tablas descompuestas es sin pérdida (el atributo común `responsable_control_id` es clave primaria/superclave en `responsable_deposito`).
-- [ ] `down.sql` ejecuta sin errores y restaura la base a su estado inicial.
+- [x] `COUNT(*)` coincide entre la relación original y la reconstruida por la vista.
+- [x] Los dos `EXCEPT` (original `EXCEPT` vista y vista `EXCEPT` original) devuelven 0 filas.
+- [x] La unión entre las tablas descompuestas es sin pérdida (el atributo común `responsable_control_id` es clave primaria/superclave en `responsable_deposito`).
+- [x] El bloque "down" ejecuta sin errores y deja intactas `control_lote_almacen`, `lote`, `deposito` y `usuario`.
 
 ## 7. Plan de reversión
 
-Contenido de `down.sql`:
+Contenido del bloque "down" (sección 8 de `tp_fnbc_control_lote.sql`):
 Elimina la vista de compatibilidad y las tablas descompuestas `control_lote` y `responsable_deposito`, manteniendo intactas las tablas originales.
 
 ## 8. Riesgos
 
 - Perder restricciones de FK si las tablas maestras `lote` y `deposito` no están correctamente creadas antes de la descomposición.
+- **Limitación conocida (FNBC vs. preservación de dependencias):** la descomposición es sin pérdida pero no preserva `{LoteID, DepositoID} -> ResponsableControlID`. Contraejemplo (sección 7 del script, captura 9): con `(803, 30)` en `responsable_deposito` y `(501, 803)` en `control_lote`, el lote `501` queda con dos responsables en el depósito `30`, algo que la clave primaria de la tabla original impediría. Para imponer esa regla haría falta un trigger o una verificación por consulta.
+- El script inserta usuarios de prueba (801-803) en `usuario`: se ejecuta en `copia_fnbc` y nunca en `plantilla_food_store`.

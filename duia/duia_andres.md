@@ -1,64 +1,68 @@
-# Declaración de Uso de IA (DUIA) — Parte 1: Esquema, Descomposición y Migración
+# Declaración de Uso de IA (DUIA) — Andrés Fabre
 
-**Integrante:** Andrés Fabre
-**Rol / Asignación:** Parte 1 — Esquema inicial, descomposición sin pérdida
-a FNBC, vista de compatibilidad y migración de `control_lote_almacen`
+**Integrante:** Andrés Fabre (Grupo 10)
 **Materia:** Base de Datos II (UTN) — Unidad 4
 **Proyecto Integrador:** Food Store
+**Aporte:** spec de la Parte 1 (`specs/spec_parte_1_fnbc_control_lote.md`): diagnóstico teórico de FNBC y esquema objetivo de la descomposición
 **Herramienta de IA utilizada:** Gemini
 
----
-
-## Registro de Interacciones y Decisiones con IA
-
-| Herramienta | Para qué se usó | Prompt / spec (resumen) | Se aceptó / se descartó — por qué |
-|---|---|---|---|
-| Gemini | Redactar la spec de la Parte 1 (`specs/spec_parte_1_fnbc_control_lote.md`) siguiendo la plantilla del protocolo del grupo, a partir del diagnóstico de FNBC ya corregido | Se le dio el esquema real (`lote_id`, `deposito_id`, `responsable_control_id`), las dos reglas de negocio, y se pidió completar las 8 secciones de la plantilla de spec | Se aceptó casi completo. Se corrigió manualmente una ambigüedad en la sección 4 (la spec dejaba dos alternativas para la vista de compatibilidad — crearla aparte, o renombrar la tabla original — sin decidir una); se optó por la vista aparte, sin tocar `control_lote_almacen` |
-| Gemini | Generar el DDL de la descomposición (`responsable_deposito`, tabla transaccional sin `deposito_id`) y la migración de datos | Se pidió aplicar la "receta de tres pasos" del material de cátedra sobre la dependencia violatoria `ResponsableControlID -> DepositoID` | Se aceptó, con un ajuste de nombre: la tabla transaccional se llamó `control_lote` (no `control_lote_almacen_fnbc`, como tenía una versión anterior del archivo) — se unificó el nombre entre la spec y el `.sql` |
-| Gemini | Reescribir el script para que fuera re-ejecutable de punta a punta (bloque de limpieza al inicio) y para que la instancia de ejemplo usara exactamente los IDs del enunciado (501-503, 30-31, 801-802) en vez de IDs autogenerados | Se pidió agregar `OVERRIDING SYSTEM VALUE` en los `INSERT` de `lote`, `deposito` y `usuario` para fijar esos IDs | Se aceptó — mejora la fidelidad del script respecto al enunciado y facilita que las capturas muestren exactamente los mismos números que la consigna |
-| Gemini | Proponer una sección adicional mostrando una limitación conocida de BCNF: la descomposición no preserva la dependencia `{LoteID, DepositoID} -> ResponsableControlID` | Se le pidió, en base al material de cátedra (sección "el costo de BCNF"), armar una prueba en vivo que mostrara el problema | Se aceptó e implementó como sección 7 del script: se inserta un segundo responsable para el mismo (lote, depósito) en las tablas descompuestas — algo que la tabla original hubiera rechazado por su clave primaria — y se confirma que la vista permite la inconsistencia. Probado con `ROLLBACK` para no dejar datos corruptos |
+> Esta declaración cubre únicamente lo que hizo Andrés. El script final de la Parte 1
+> (`tp_fnbc_control_lote.sql`), sus capturas y su verificación en pgAdmin fueron
+> consolidados por Mariano Chirino y están declarados en `duia_mariano.md`.
 
 ---
 
-## Verificación sobre el motor real
+## Registro de interacciones con IA
 
-Todo lo generado se ejecutó y se verificó en `plantilla_food_store`
-(protocolo del grupo: nunca `copia_trabajo` para este esquema chico, que no
-necesita volumen):
+| Herramienta | Para qué se usó | Prompt (resumen) | Qué produjo | Se aceptó / se descartó — por qué |
+|---|---|---|---|---|
+| Gemini | Generar el diagnóstico teórico de la Parte 1 en Markdown para incluirlo en la spec | Se le dio la tabla `control_lote_almacen(lote_id, deposito_id, responsable_control_id)` y las dos reglas de negocio del enunciado, y se pidió: notación formal de las dependencias, clausuras paso a paso, claves candidatas con atributos primos y no primos, justificación de la violación de FNBC, las tres anomalías sobre la instancia de ejemplo y el esquema objetivo de la descomposición. El prompt completo está al final de este documento | Las secciones 3 (diagnóstico) y 4 (esquema objetivo) de la spec, que Andrés subió al repositorio en el commit `1e99381` | **Aceptado.** El diagnóstico es correcto y coincide con el análisis independiente de las demás versiones: F1 `{L,D} → R`, F2 `R → D`; claves candidatas `{L,D}` y `{L,R}`; los tres atributos son primos; viola FNBC por F2. Tiene dos puntos pendientes, indicados abajo |
 
-1. Esquema inicial + instancia de ejemplo → confirmado con
-   `capturas/p1_captura1_original.png`.
-2. Descomposición (`responsable_deposito`, `control_lote`) + migración →
-   confirmado con `capturas/p1_captura4a_responsable_deposito.png` y
-   `p1_captura4b_control_lote.png`.
-3. Vista de compatibilidad `v_control_lote_almacen` → confirmado con
-   `capturas/p1_captura5_vista.png`.
-4. Verificación bidireccional (los dos `EXCEPT`) → **0 filas en ambos
-   sentidos**, confirmado con `p1_captura6_except_original_menos_vista.png`
-   y `p1_captura7_except_vista_menos_original.png`.
-5. Conteo de filas (antes/después) → confirmado con `p1_captura8_conteo.png`.
-6. Limitación de F1 no preservada → confirmado con
-   `p1_captura9_limitacion_no_preserva_F1.png`.
-7. `down.sql` probado: se ejecutó, se confirmó que las tablas nuevas
-   desaparecieron (`p1_down_1_antes.png`, `p1_down_2_despues.png`), y se
-   volvió a correr el `up` completo para dejar la base en el estado final
-   (`p1_down_3_up_de_nuevo.png`).
-8. Corrida completa del script sin errores →
-   `p1_00_script_completo_ok.png`.
+## Puntos de la spec que se corrigieron después
 
-Nada de esto se aceptó "porque lo dijo la IA": cada paso se corrió en
-pgAdmin sobre datos reales antes de darlo por válido.
+La spec subida por Andrés tenía dos detalles que se revisaron en el grupo antes de la entrega:
 
-## Resumen de decisiones
+1. **Ambigüedad en la sección 4.** Dejaba dos alternativas para la vista de compatibilidad (crear `v_control_lote_almacen` aparte, o "renombrar la tabla original") sin decidir una. La decisión del grupo fue la vista aparte, sin renombrar la tabla original.
+2. **Nombre del archivo.** El prompt pedía guardarlo como `specs/parte1_control_lote.md`, pero el archivo se subió como `specs/spec_parte_1_fnbc_control_lote.md`; el repositorio usa este último nombre.
+
+*(Andrés: confirmá si hiciste alguna otra modificación a mano sobre lo que devolvió Gemini antes de subirlo, y si usaste la IA para algo más de la Parte 1. Si fue así, agregalo como una fila nueva en la tabla.)*
+
+## Verificación
+
+- El diagnóstico se contrastó con el enunciado (punto 4.1) y con las otras versiones del análisis de la Parte 1 del grupo, que llegan a las mismas dependencias, claves y violación de FNBC.
+- El esquema objetivo de la spec (`responsable_deposito` y `control_lote`) es el que finalmente se implementó en `tp_fnbc_control_lote.sql`, y se verificó en pgAdmin sobre `copia_fnbc`: los dos `EXCEPT` dieron 0 filas y el conteo coincidió (3 y 3). Esa ejecución la hizo Mariano; las capturas están en `capturas/`.
+
+## Prompt utilizado (completo)
+
+```text
+Hola Gemini, necesito resolver el análisis teórico de Normalización (FNBC) para la Parte 1
+(control_lote_almacen) del TP4 de Base de Datos 1.
+
+La tabla original es control_lote_almacen(lote_id, deposito_id, responsable_control_id) y
+cuenta con las siguientes reglas de negocio:
+
+  - Para un lote y un depósito interviniente dados, el responsable de control queda
+    unívocamente determinado ({lote_id, deposito_id} -> responsable_control_id).
+  - Cada responsable pertenece a un único depósito (responsable_control_id -> deposito_id).
+
+Por favor, generame el diagnóstico teórico completo en formato Markdown para incluirlo en la
+spec specs/parte1_control_lote.md, incluyendo:
+
+  - Notación formal de las dependencias funcionales (FDs).
+  - Cálculo paso a paso de las clausuras de atributos.
+  - Conjunto completo de claves candidatas, identificando atributos primos y no primos.
+  - Verificación y justificación de por qué la relación viola la Forma Normal de Boyce-Codd
+    (FNBC), indicando la FD violatoria.
+  - Redacción detallada de las 3 anomalías clásicas de diseño (Inserción, Borrado y
+    Actualización) aplicadas a la instancia de datos de ejemplo.
+  - Esquema objetivo resultante de aplicar la descomposición sin pérdida de información.
+```
+
+## Resumen
 
 | Aspecto | Resultado |
 |---|---|
-| Tablas resultantes | `responsable_deposito(responsable_control_id PK, deposito_id)` y `control_lote(lote_id, responsable_control_id)` |
-| Atributo común de la descomposición | `responsable_control_id` — es clave primaria de `responsable_deposito`, por eso la unión es sin pérdida |
-| Vista de compatibilidad | `v_control_lote_almacen`, reconstruye la relación original vía `JOIN` |
-| Verificación | Los dos `EXCEPT` (en ambos sentidos) dieron 0 filas |
-| Limitación documentada | La descomposición no preserva `{LoteID, DepositoID} -> ResponsableControlID`; demostrado con una prueba en vivo (sección 7 del script) |
-| `down.sql` | Probado: ejecutado, verificado, y el `up` se volvió a correr después |
-
-Detalle completo en `tp_fnbc_control_lote.sql` y en
-`specs/spec_parte_1_fnbc_control_lote.md`.
+| Herramienta | Gemini |
+| Uso declarado | Diagnóstico teórico de FNBC y esquema objetivo, para la spec de la Parte 1 |
+| Resultado | Aceptado; correcto, con la ambigüedad de la vista resuelta por el grupo después |
+| Verificación | Coincide con el enunciado y con las demás versiones; implementado y verificado en pgAdmin por Mariano |

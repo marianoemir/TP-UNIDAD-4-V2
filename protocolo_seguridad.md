@@ -81,7 +81,7 @@ Antes de cualquier cambio estructural se saca un respaldo de la copia de
 trabajo, independiente del `ROLLBACK`:
 
 ```bash
-pg_dump copia_trabajo > respaldos/copia_trabajo_YYYYMMDD_HHMM.sql
+pg_dump copia_trabajo > copia_trabajo_YYYYMMDD_HHMM.sql
 ```
 
 **Se considera cambio estructural, y requiere respaldo previo, cualquiera de:**
@@ -93,8 +93,8 @@ pg_dump copia_trabajo > respaldos/copia_trabajo_YYYYMMDD_HHMM.sql
 - Cualquier migración de datos entre tablas (por ejemplo, al descomponer un
   esquema en tablas nuevas)
 
-Los respaldos se guardan en la carpeta `respaldos/` del repo (o fuera del
-repo si el archivo es pesado), con fecha y hora en el nombre.
+Los respaldos se guardan fuera del repo (son pesados y no se versionan), con
+fecha y hora en el nombre.
 
 **Recomendación general:** sacar un respaldo separado justo antes de empezar
 cada bloque de trabajo que agregue objetos distintos (por ejemplo: antes de

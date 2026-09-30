@@ -189,7 +189,7 @@ sobreindexación.
 estructura de carpetas que se usó en la entrega de la Unidad 3 (no un link a
 GitHub). Los archivos nuevos de esta entrega van **sueltos en la raíz** del
 repositorio (no en una subcarpeta como `TP4_FNBC_Desnormalizacion/`), junto a
-`AGENTS.md`, `protocolo_seguridad.md`, `README.md` y `division_tareas_tp4.md`
+`AGENTS.md`, `protocolo_seguridad.md` y `README.md`
 — exactamente igual que en la U3, donde `indices.sql`, `views.sql`,
 `materializadas.sql` e `informe_mediciones.md` estaban en la raíz.
 
@@ -201,26 +201,25 @@ Trabajo-Practico-Unidad-4-/
 ├── archivos necesarios para la BD/
 ├── AGENTS.md
 ├── protocolo_seguridad.md
-├── division_tareas_tp4.md
 ├── README.md
-├── tp_fnbc_control_lote.sql              (Parte 1 — Andrés / Facundo)
+├── tp_fnbc_control_lote.sql              (Parte 1)
 ├── tp_desnormalizacion_top_categorias.sql (Parte 2 — Mariano)
-├── informe_tp4.md (o .pdf/.docx al empaquetar)
+├── informe_tp4_completo.docx
 ├── specs/
-│   ├── parte1_control_lote.md
+│   ├── spec_parte_1_fnbc_control_lote.md
 │   └── parte2_desnormalizacion_top_categorias.md
 ├── duia/
 │   ├── duia_mariano.md
 │   ├── duia_andres.md
 │   └── duia_facundo.md
-└── Parte2-Mariano-Capturas.docx           (evidencia de EXPLAIN ANALYZE)
+└── capturas/                              (planes EXPLAIN ANALYZE e imágenes de pgAdmin)
 ```
 
 No modifica `schema.sql`, `objects.sql` ni `data.sql` existentes.
 
 | Archivo (nuevo) | Contenido | Responsable | Corre sobre |
 |---|---|---|---|
-| `tp_fnbc_control_lote.sql` | Extensión mayorista: tablas `lote`, `deposito` (nuevas, no existían en el proyecto) y `control_lote_almacen`; instancia de ejemplo; tablas descompuestas por FNBC; vista de compatibilidad; migración de datos; `up.sql`/`down.sql` del patrón expandir-migrar-verificar-contraer | Andrés (esquema y descomposición) + Facundo (análisis FNBC) | `plantilla_food_store` (esquema nuevo y chico, no necesita volumen) |
+| `tp_fnbc_control_lote.sql` | Extensión mayorista: tablas `lote`, `deposito` (nuevas, no existían en el proyecto) y `control_lote_almacen`; instancia de ejemplo; tablas descompuestas por FNBC; vista de compatibilidad; migración de datos; `up.sql`/`down.sql` del patrón expandir-migrar-verificar-contraer | Mariano (versión final; aportes previos de Andrés y Facundo) | `copia_fnbc` (creada con `TEMPLATE plantilla_food_store`; el script inserta usuarios de prueba, por eso NO se corre sobre la plantilla) |
 | `tp_desnormalizacion_top_categorias.sql` | Vista materializada `mv_ventas_categoria_dia` para el reporte "top 5 categorías por venta del día"; índice único; mecanismo de sincronización (`REFRESH CONCURRENTLY`); consulta optimizada; script de auditoría — **completo** | Mariano | `copia_trabajo` (necesita volumen real para que el `EXPLAIN ANALYZE` muestre diferencia) |
 
 **Tablas nuevas a crear como prerrequisito de `control_lote_almacen`:**
@@ -233,8 +232,9 @@ IDENTITY PRIMARY KEY`).
 
 **Atención con `mv_facturacion_categoria_mes`:** esa vista materializada
 existente agrupa por **mes** y filtra `estado = 'CONFIRMADO'`. El reporte de
-este TP necesita **el día** (se usó `2025-01-01` como fecha representativa,
-ver justificación en `tp_desnormalizacion_top_categorias.sql`) sin filtrar
+este TP necesita **el día** (se reasignaron a `CURRENT_DATE` los 400 pedidos del
+2025-10-09 para simular un día con volumen, ver
+`tp_desnormalizacion_top_categorias.sql`) sin filtrar
 por estado — no alcanza con reutilizarla tal cual; sirve solo como
 referencia de patrón (índice único + `REFRESH CONCURRENTLY`), no como la
 solución en sí. La vista nueva de este TP se llama `mv_ventas_categoria_dia`,

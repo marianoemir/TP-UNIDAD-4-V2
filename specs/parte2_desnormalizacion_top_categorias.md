@@ -3,9 +3,9 @@
 ## 1. Contexto
 
 Tablas afectadas: `detalle_pedido`, `producto`, `categoria`, `pedido`
-(lectura únicamente, no se modifican). Volumen en `copia_trabajo`: ~400
-pedidos/día en el rango poblado por `carga_masiva.sql` (200.000+ pedidos en
-total). La consulta la ejecuta el panel de administración "muchas veces por
+(lectura únicamente, no se modifican). Volumen en `copia_trabajo`: 200.006
+pedidos en total; para el día de la medición hay 406 pedidos (405 vigentes,
+811 detalles vigentes, 5 categorías), ver nota más abajo. La consulta la ejecuta el panel de administración "muchas veces por
 minuto" (dato del enunciado del TP).
 
 ## 2. Reglas de negocio (confirmadas con: enunciado del TP, punto 5.1)
@@ -19,14 +19,14 @@ minuto" (dato del enunciado del TP).
 Evidencia en los datos (consulta original, con `EXPLAIN ANALYZE`):
 
 ```sql
-EXPLAIN ANALYZE
+EXPLAIN (ANALYZE, BUFFERS)
 SELECT c.nombre AS categoria,
        SUM(dp.subtotal) AS total_vendido
 FROM detalle_pedido dp
 JOIN producto pr ON pr.id = dp.producto_id
 JOIN categoria c ON c.id = pr.categoria_id
 JOIN pedido ped ON ped.id = dp.pedido_id
-WHERE ped.fecha = '2025-01-01'  -- sustituye CURRENT_DATE, ver nota abajo
+WHERE ped.fecha = CURRENT_DATE
   AND dp.eliminado = FALSE
   AND ped.eliminado = FALSE
 GROUP BY c.nombre
@@ -34,15 +34,18 @@ ORDER BY total_vendido DESC
 LIMIT 5;
 ```
 
-Resultado obtenido: **Execution Time: 1301.956 ms**. Nodo dominante: `Nested
-Loop` (pedido → detalle_pedido), con `Index Scan` sobre `detalle_pedido`
-ejecutado 400 veces (`loops=400`), uno por cada pedido del día.
+Resultado obtenido (tercera corrida, caché caliente): **Execution Time:
+6.546 ms**, 4464 buffers. Nodo dominante: `Nested Loop`, con `Index Scan` sobre
+`detalle_pedido` ejecutado 405 veces (`loops=405`, uno por pedido del día) y
+sobre `producto_pkey` 811 veces (`loops=811`, uno por detalle).
 
-> Nota: `CURRENT_DATE` no tenía volumen representativo en `copia_trabajo`
-> (la carga masiva pobló fechas históricas, no la fecha real del sistema —
-> solo 5 pedidos matcheaban). Se sustituyó por `'2025-01-01'` para medir un
-> escenario con volumen realista (~400 pedidos), documentado en
-> `tp_desnormalizacion_top_categorias.sql`.
+> Nota: la carga masiva pobló solo fechas históricas, así que `CURRENT_DATE`
+> no tenía volumen. En `copia_trabajo` (base descartable) se reasignaron a
+> `CURRENT_DATE` los 400 pedidos del 2025-10-09
+> (`UPDATE pedido SET fecha = CURRENT_DATE WHERE fecha = '2025-10-09'`) y se
+> corrió `ANALYZE pedido`. Así la consulta del enunciado se mide tal cual,
+> sin sustituir la fecha. Solo es reproducible el mismo día del `UPDATE`.
+> Documentado en `tp_desnormalizacion_top_categorias.sql`.
 
 ## 3. Diagnóstico
 
@@ -78,14 +81,16 @@ nunca se tocan.
 
 ## 6. Criterios de aceptación
 
-- [x] Motivo medido con `EXPLAIN ANALYZE` (1301.956 ms, ver
-      `capturas mariano/explain_antes.txt` o `Parte2-Mariano-Capturas.docx`)
+- [x] Motivo medido con `EXPLAIN ANALYZE` (6.546 ms, 4464 buffers,
+      ver `capturas/explain_antes.txt`)
 - [x] Un único dueño del dato: solo `REFRESH MATERIALIZED VIEW
       CONCURRENTLY` escribe la vista, ningún trigger
-- [x] Consulta de conciliación entregada y ejecutada (0 filas de diferencia)
+- [x] Consulta de conciliación entregada y ejecutada (0 filas de diferencia; con
+      prueba de detección dentro de `BEGIN ... ROLLBACK`, que devolvió 1 fila)
 - [x] Documentado en `tp_desnormalizacion_top_categorias.sql` y reversible
       con `DROP MATERIALIZED VIEW`
-- [x] Consulta optimizada medida: 1.393 ms (ver `explain_despues.txt`)
+- [x] Consulta optimizada medida: 0.106 ms, 13 buffers (~62x en tiempo, ~340x en
+      buffers; ver `capturas/explain_despues.txt`)
 
 ## 7. Plan de reversión
 

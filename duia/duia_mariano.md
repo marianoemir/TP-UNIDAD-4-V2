@@ -1,49 +1,55 @@
-# Declaración de Uso de IA (DUIA) — Parte 2
+# Declaración de Uso de IA (DUIA) — Mariano Chirino
 
-**Integrante:** Mariano Chirino
-**Rol / Asignación:** Parte 2 — Desnormalización controlada (top 5 categorías por venta del día)
+**Integrante:** Mariano Chirino (Grupo 10)
 **Materia:** Base de Datos II (UTN) — Unidad 4
 **Proyecto Integrador:** Food Store
+**Alcance:** versión final de la Parte 1 (FNBC) y de la Parte 2 (desnormalización controlada)
+**Herramienta principal:** Claude (chat), además de OpenCode/Kiro en las primeras versiones del grupo
+
+> Esta declaración cubre únicamente lo que hice y usé yo. Andrés Fabre y Facundo Quiroga
+> declaran su propio uso de IA en `duia_andres.md` y `duia_facundo.md`.
 
 ---
 
-## Registro de Interacciones y Decisiones con IA
+## Registro de interacciones y decisiones con IA
 
-| Herramienta | Para qué se usó | Spec / Prompt (resumen) | Se aceptó / se descartó — por qué |
-|---|---|---|---|
-| Claude | Medir la consulta original del punto 5.1 con `EXPLAIN ANALYZE` sobre `copia_trabajo` y detectar el nodo que dominaba el costo | Se corrió la consulta tal cual la da el enunciado, con `CURRENT_DATE` | **Se detectó un problema en el enunciado antes que en el índice**: `CURRENT_DATE` solo matcheaba 5 pedidos en `copia_trabajo` (la carga masiva pobló fechas históricas), dando un plan liviano (14.7 ms) no representativo. Se identificó primero, con `SELECT fecha, COUNT(*) FROM pedido GROUP BY fecha ORDER BY COUNT(*) DESC`, una fecha con volumen real (~400 pedidos/día) y se sustituyó `CURRENT_DATE` por `'2025-01-01'` para la medición. Se documentó la sustitución en vez de ocultarla. |
-| Claude | Proponer el patrón de desnormalización (vista materializada vs. columna + trigger) a partir del `EXPLAIN ANALYZE` medido | Se le pasó el plan completo (1301.956 ms, `Nested Loop` con `loops=400` sobre `detalle_pedido`) y se pidió justificar la elección contra los 4 requisitos del protocolo de la cátedra | **Se aceptó vista materializada**, con el argumento de que es un reporte agregado (SUM + GROUP BY + LIMIT) consultado con alta frecuencia y tolerancia a una ventana chica de desactualización — un trigger recalcularía el top-5 completo en cada escritura de `detalle_pedido`, mucho más caro. Se contrastó con el precedente ya existente en el proyecto (`mv_facturacion_categoria_mes`), que usa el mismo mecanismo (índice único + `REFRESH CONCURRENTLY`). |
-| Claude | Generar el DDL de `mv_ventas_categoria_dia`, su índice único, la consulta optimizada y el script de auditoría | Se pidió que la vista agrupe por categoría y fecha (no por mes, a diferencia de `mv_facturacion_categoria_mes`) y que respete el mismo filtro de `eliminado = FALSE` que la consulta original (sin el filtro de `estado` que sí tiene la vista existente) | Se aceptó el DDL propuesto, verificándolo contra las columnas reales de `schema.sql` antes de ejecutarlo. Se corrigió manualmente al ejecutar: la primera versión no incluía `categoria_id` como columna propia (solo `categoria` por nombre), se agregó para tener una clave de agrupación canónica y no depender de agrupar por texto. |
+### Parte 2 — Desnormalización controlada
+
+| Herramienta | Para qué se usó | Se aceptó / se descartó — por qué |
+|---|---|---|
+| Claude | Medir la consulta del punto 5.1 con `EXPLAIN ANALYZE` y detectar el nodo dominante | Con `CURRENT_DATE` la carga masiva dejaba muy pocos pedidos (la carga solo pobló fechas históricas). **Primera versión (descartada):** se sustituyó la fecha por `'2025-01-01'` y se midió 1301.956 ms. Esa medición fue en caché fría y con solo 2 categorías, así que no era comparable con la del "después". **Versión final:** se reasignaron a `CURRENT_DATE` los 400 pedidos del 2025-10-09 (`UPDATE` + `ANALYZE`), quedando 406 pedidos hoy (405 vigentes, 811 detalles, 5 categorías), y se midió la consulta del enunciado tal cual, en la tercera corrida (caché caliente): **6.546 ms**, 4464 buffers, `Nested Loop` dominante. |
+| Claude | Proponer el patrón (vista materializada vs. columna + trigger) | Se aceptó **vista materializada** `mv_ventas_categoria_dia`: es un reporte agregado, de lectura muy frecuente y tolerante a una ventana chica de desactualización; un trigger tendría que recalcular el agregado en cada escritura de `detalle_pedido`. Mismo mecanismo que el precedente `mv_facturacion_categoria_mes` (índice único + `REFRESH CONCURRENTLY`). |
+| Claude | Generar el DDL, la consulta optimizada y la auditoría | El DDL se verificó contra las columnas reales de `schema.sql`. Se corrigió que la vista incluyera `categoria_id` como clave canónica de agrupación. Consulta sobre la vista: **0.106 ms**, 13 buffers (~62x en tiempo, ~340x en buffers). |
+| Claude | Auditoría de desincronización | **Error detectado y corregido:** la primera auditoría usaba `JOIN` interno y daba un falso negativo (no detectaba pares categoría-fecha ausentes en la vista). Se reemplazó por `FULL OUTER JOIN ... IS DISTINCT FROM`. Se probó dentro de `BEGIN ... ROLLBACK`: tras un `UPDATE` de `detalle_pedido` devolvió 1 fila (diferencia 52500.00) y tras el `ROLLBACK` volvió a 0 filas. |
+
+### Parte 1 — FNBC sobre `control_lote_almacen`
+
+| Herramienta | Para qué se usó | Se aceptó / se descartó — por qué |
+|---|---|---|
+| Claude | Primera versión del script de la Parte 1 | **Descartada:** inventaba un esquema propio (tabla `almacenero`, etc.) que no correspondía al enunciado. Se rehízo con el esquema y la instancia EXACTOS del punto 4.1 (lotes 501-503, depósitos 30-31, responsables 801-802). |
+| Claude | Dependencias funcionales, clausuras, claves candidatas y verificación de FNBC | Se aceptó y **se revisó a mano**: F1 `{L,D}->R`, F2 `R->D`; claves candidatas `{L,D}` y `{L,R}`; los tres atributos son primos; viola FNBC por F2 (`{R}+ = {R,D}` no es superclave) pero cumple 3FN. |
+| Claude | Descomposición, vista de compatibilidad y verificación | `responsable_deposito` (PK `responsable_control_id`) y `control_lote` (PK `(lote_id, responsable_control_id)`); vista con `NATURAL JOIN`. Verificada con conteo y los dos `EXCEPT` (0 filas cada uno). Se agregó la **limitación** de que la descomposición no preserva `{L,D}->R` (contraejemplo ejecutado en `BEGIN ... ROLLBACK`). |
 
 ---
 
 ## Verificación sobre el motor real
 
-Todo lo generado se probó en `copia_trabajo` (nunca en `plantilla_food_store`),
-siguiendo el protocolo del grupo:
+Todo se probó en PostgreSQL 18 con pgAdmin 4: la Parte 2 en `copia_trabajo` y la Parte 1 en `copia_fnbc`, ambas creadas con `TEMPLATE plantilla_food_store`. La plantilla no se tocó.
 
-1. `EXPLAIN ANALYZE` de la consulta original → **1301.956 ms**, `Nested Loop`
-   como nodo dominante.
-2. `CREATE MATERIALIZED VIEW mv_ventas_categoria_dia` + índice único →
-   ejecutado sin errores (confirmado por el mensaje `CREATE INDEX` en pgAdmin).
-3. `EXPLAIN ANALYZE` de la consulta contra la vista → **1.393 ms**,
-   `Bitmap Index Scan` sobre el índice único.
-4. Script de auditoría (comparación vista vs. recálculo desde la fuente de
-   verdad) → **0 filas**, confirmando sincronización.
+1. Parte 2: `EXPLAIN (ANALYZE, BUFFERS)` antes (6.546 ms) y después (0.106 ms); auditoría con 0 filas y prueba de detección.
+2. Parte 1: script completo ejecutado sin errores; capturas de la tabla original, las dos tablas, la vista, los dos `EXCEPT` y el conteo (3 y 3); anomalía de actualización y limitación de la descomposición probadas con `ROLLBACK`.
+3. Bloque "down" de la Parte 1 probado: up → down → up.
 
-Nada de esto se aceptó "porque lo dijo la IA": cada paso se corrió en pgAdmin
-sobre datos reales y se verificó el resultado antes de darlo por válido.
+Ninguna propuesta de la IA se aceptó sin correrla y verificar el resultado en pgAdmin.
 
 ## Resumen de decisiones
 
 | Aspecto | Resultado |
 |---|---|
-| Patrón elegido | Vista materializada (`mv_ventas_categoria_dia`) |
-| Motivo medido | 1301.956 ms, `Nested Loop` con `loops=400` |
-| Mejora | 1.393 ms — **~935x más rápido** |
+| Patrón elegido (Parte 2) | Vista materializada `mv_ventas_categoria_dia` |
+| Motivo medido | 6.546 ms, `Nested Loop` (`loops=405` y `loops=811`), 4464 buffers |
+| Mejora | 0.106 ms, 13 buffers — ~62x en tiempo, ~340x en buffers |
 | Único dueño del dato | `REFRESH MATERIALIZED VIEW CONCURRENTLY` (ningún trigger) |
-| Conciliación | 0 filas de diferencia entre lo almacenado y lo recalculado |
+| Conciliación | 0 filas entre lo almacenado y lo recalculado |
 | Reversible | `DROP MATERIALIZED VIEW` — fuente de verdad intacta |
-
-Detalle completo de la spec en `specs/parte2_desnormalizacion_top_categorias.md`
-y del script en `tp_desnormalizacion_top_categorias.sql`.
+| Parte 1 | No cumple FNBC por `R -> D`; descomposición sin pérdida verificada con los dos `EXCEPT` |

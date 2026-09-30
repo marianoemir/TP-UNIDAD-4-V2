@@ -3,8 +3,8 @@
 Proyecto integrador de un sistema de venta de comida, implementado en
 PostgreSQL. Este repositorio contiene el Trabajo Práctico de la **Unidad 4**
 — *Forma Normal de Boyce-Codd y Desnormalización Controlada en Food Store* —
-resuelto en grupo de 3 integrantes con OpenCode y Kiro como herramientas de
-IA.
+resuelto por el Grupo 10 con OpenCode, Kiro y Claude como herramientas de IA
+(el detalle de qué se usó y para qué está en `duia/`).
 
 ## Grupo
 
@@ -56,23 +56,22 @@ plantilla_food_store`)
 |---|---|
 | `tp_fnbc_control_lote.sql` | Parte 1 — Esquema `control_lote_almacen` (con `lote` y `deposito` como tablas maestras nuevas), análisis de dependencias funcionales y claves candidatas, demostración de violación de FNBC, descomposición sin pérdida (`up.sql`/`down.sql`), vista de compatibilidad, migración de datos verificada |
 | `tp_desnormalizacion_top_categorias.sql` | Parte 2 — Vista materializada `mv_ventas_categoria_dia` para el reporte "top 5 categorías por venta del día", índice único, consulta optimizada, script de auditoría |
-| `specs/` | Especificaciones de Kiro, una por parte, redactadas antes de generar el SQL con OpenCode |
+| `specs/` | Especificaciones, una por parte (`spec_parte_1_fnbc_control_lote.md`, `parte2_desnormalizacion_top_categorias.md`), redactadas antes de generar el SQL |
+| `capturas/` | Evidencia: planes de `EXPLAIN ANALYZE` antes/después (Parte 2) y capturas de pgAdmin (Partes 1 y 2) |
 | `duia/` | Declaración de Uso de IA, un archivo por integrante |
 | `protocolo_seguridad.md` | Protocolo obligatorio: copia de trabajo, transacción reversible, respaldo previo, patrón expandir-migrar-verificar-contraer, los 4 requisitos de desnormalización controlada |
-| `division_tareas_tp4.md` | Reparto de tareas y dependencias entre integrantes |
-| `informe_tp4.md` (o `.pdf`/`.docx`) | Informe breve con dependencias funcionales, claves candidatas, demostración de FNBC, justificación de unión sin pérdida, capturas de `EXPLAIN ANALYZE` antes/después y justificación del patrón de desnormalización |
+| `informe_tp4_completo.docx` | Informe breve con dependencias funcionales, claves candidatas, demostración de FNBC, justificación de unión sin pérdida, capturas de `EXPLAIN ANALYZE` antes/después y justificación del patrón de desnormalización |
 
 ### Quién hizo qué
 
 | Parte | Integrante | Contenido |
 |---|---|---|
-| Parte 1 — Análisis FNBC | Facundo Quiroga | Dependencias funcionales, clausuras, claves candidatas, demostración formal de violación de FNBC, anomalías clásicas |
-| Parte 1 — Esquema, descomposición y migración | Andrés Fabre | Esquema inicial (`lote`, `deposito`, `control_lote_almacen`), descomposición sin pérdida, vista de compatibilidad, migración de datos verificada con los dos `EXCEPT` |
-| Parte 2 — Desnormalización controlada | Mariano Chirino | Baseline medido (1301.956 ms), vista materializada `mv_ventas_categoria_dia`, consulta optimizada (1.393 ms — ~935x más rápida), script de auditoría (0 filas de diferencia) |
+| Parte 1 — FNBC (`tp_fnbc_control_lote.sql`) | Mariano Chirino (versión final) | Dependencias funcionales, clausuras, claves candidatas, violación de FNBC, anomalías, descomposición sin pérdida, vista de compatibilidad, migración verificada con los dos `EXCEPT`, limitación de la descomposición y prueba de `down` |
+| Parte 1 — aportes previos | Andrés Fabre, Facundo Quiroga | Andrés: spec de la Parte 1 (`specs/spec_parte_1_fnbc_control_lote.md`). Facundo: primera versión del script de la Parte 1 (rama `integrante-3`), reemplazada por la versión final |
+| Parte 2 — Desnormalización controlada | Mariano Chirino | Baseline medido (6.546 ms), vista materializada `mv_ventas_categoria_dia`, consulta optimizada (0.106 ms — ~62x más rápida, 340x menos buffers), auditoría con `FULL OUTER JOIN` (0 filas; con prueba de detección) |
 
 El detalle completo de cada parte (spec usada, qué generó la IA, qué se
-aceptó o descartó y por qué) está en `informe_tp4.md` y en el `duia/` de
-cada integrante.
+aceptó o descartó y por qué) está en el informe y en el `duia/`.
 
 ## Cómo reproducir las pruebas de este trabajo
 
@@ -88,10 +87,15 @@ createdb -T plantilla_food_store copia_trabajo
 
 # 3. Aplicar la carga masiva (necesaria para medir la Parte 2 con volumen real)
 psql -d copia_trabajo -f "archivos necesarios para la BD/carga_masiva.sql"
+psql -d copia_trabajo -f "archivos necesarios para la BD/indices_semana3.sql"
+psql -d copia_trabajo -f "archivos necesarios para la BD/indices.sql"
+psql -d copia_trabajo -f "archivos necesarios para la BD/views.sql"
+psql -d copia_trabajo -f "archivos necesarios para la BD/materializadas.sql"
 
 # 4. Aplicar los objetos nuevos de este TP
-psql -d plantilla_food_store -f "tp_fnbc_control_lote.sql"   # esquema chico, sin volumen
-psql -d copia_trabajo -f "tp_desnormalizacion_top_categorias.sql"  # necesita volumen
+createdb -T plantilla_food_store copia_fnbc
+psql -d copia_fnbc -f "tp_fnbc_control_lote.sql"   # esquema chico, en su propia copia
+psql -d copia_trabajo -f "tp_desnormalizacion_top_categorias.sql"  # necesita volumen; reasigna 400 pedidos a CURRENT_DATE
 ```
 
 Antes de aplicar cualquier cambio sobre la base se sigue el flujo de
