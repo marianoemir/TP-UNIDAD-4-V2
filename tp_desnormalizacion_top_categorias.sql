@@ -1,51 +1,59 @@
 -- ============================================================
 -- TP Unidad 4 — Parte 2: Desnormalización controlada
 -- "Top 5 categorías por monto vendido en el día" (panel de administración)
--- Autor: Mariano
--- Corre sobre: copia_trabajo (con carga_masiva.sql ya ejecutado)
+-- Autor: Mariano Chirino
+-- Corre sobre: copia_trabajo (carga_masiva.sql + indices_semana3.sql ya aplicados)
 -- Protocolo aplicado: ver protocolo_seguridad.md, Pasos 3, 4 y 7.
+-- Evidencia: capturas mariano/explain_antes.txt y explain_despues.txt
 -- ============================================================
+
+
+-- ============================================================
+-- Preparación del escenario (simula un día con volumen)
+-- ============================================================
+-- carga_masiva.sql pobló solo fechas históricas: con CURRENT_DATE quedaban
+-- unos pocos pedidos (los del seed de data.sql), un volumen no
+-- representativo del escenario del enunciado ("a medida que la base crece,
+-- la consulta demanda un tiempo de respuesta notorio").
+-- En copia_trabajo (base descartable) se reasignaron a CURRENT_DATE los 400
+-- pedidos del 2025-10-09. Así el día de hoy queda con 406 pedidos (405
+-- vigentes, 811 detalles vigentes, 5 categorías) y la consulta del
+-- enunciado se mide TAL CUAL, con CURRENT_DATE, sin sustituir fechas.
+-- Nota: la medición solo es reproducible el mismo día en que se hace el
+-- UPDATE (CURRENT_DATE cambia cada día).
+
+UPDATE pedido SET fecha = CURRENT_DATE WHERE fecha = '2025-10-09';
+ANALYZE pedido;
 
 
 -- ============================================================
 -- 5.2 (a) — BASELINE: consulta original (4 tablas, sin desnormalizar)
 -- ============================================================
--- Consulta tal como aparece en el enunciado (5.1). Se corrió con
--- EXPLAIN ANALYZE sobre copia_trabajo (post carga_masiva.sql, ~400
--- pedidos/día distribuidos parejo en el rango cargado).
---
--- Aclaración metodológica: el enunciado usa `ped.fecha = CURRENT_DATE`,
--- pero carga_masiva.sql pobló fechas históricas (no la fecha de hoy del
--- servidor), donde CURRENT_DATE solo matcheaba 5 pedidos — un volumen no
--- representativo del escenario que describe el enunciado ("a medida que
--- la base crece, la consulta demanda un tiempo de respuesta notorio").
--- Se sustituyó CURRENT_DATE por '2025-01-01' (una fecha del rango
--- poblado, con ~400 pedidos) para medir un caso representativo. El
--- resultado completo del EXPLAIN ANALYZE con ambas fechas está en
--- Parte2-Mariano-Capturas.docx (o capturas mariano/explain_antes.txt).
---
--- EXPLAIN ANALYZE
--- SELECT c.nombre AS categoria,
---        SUM(dp.subtotal) AS total_vendido
--- FROM detalle_pedido dp
--- JOIN producto pr ON pr.id = dp.producto_id
--- JOIN categoria c ON c.id = pr.categoria_id
--- JOIN pedido ped ON ped.id = dp.pedido_id
--- WHERE ped.fecha = '2025-01-01'
---   AND dp.eliminado = FALSE
---   AND ped.eliminado = FALSE
--- GROUP BY c.nombre
--- ORDER BY total_vendido DESC
--- LIMIT 5;
---
--- Resultado medido (ver Parte2-Mariano-Capturas.docx (o capturas mariano/explain_antes.txt)):
---   Execution Time: 1301.956 ms
---   Nodo dominante: Nested Loop (pedido -> detalle_pedido), con
---   Index Scan sobre detalle_pedido ejecutado 400 veces (loops=400),
---   uno por cada pedido del día — ese acceso repetitivo fila por fila,
---   más varios bloques leídos de disco (Buffers: ... read=126), es lo
---   que explica el salto de 14.7 ms (con 5 pedidos) a 1301.9 ms
---   (con 400 pedidos).
+-- Ejecutada 3 veces seguidas; se reporta la tercera (caché caliente:
+-- todos los bloques salen de shared buffers, sin lecturas de disco).
+-- Plan completo en capturas mariano/explain_antes.txt
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT c.nombre AS categoria,
+       SUM(dp.subtotal) AS total_vendido
+FROM detalle_pedido dp
+JOIN producto pr ON pr.id = dp.producto_id
+JOIN categoria c ON c.id = pr.categoria_id
+JOIN pedido ped ON ped.id = dp.pedido_id
+WHERE ped.fecha = CURRENT_DATE
+  AND dp.eliminado = FALSE
+  AND ped.eliminado = FALSE
+GROUP BY c.nombre
+ORDER BY total_vendido DESC
+LIMIT 5;
+
+-- Resultado medido:
+--   Execution Time: 6.546 ms   |   Buffers: shared hit=4464
+--   Nodo dominante: Nested Loop. Del join (5.003 ms), 4.723 ms son del
+--   Nested Loop, cuyo costo está en los Index Scan repetidos fila por
+--   fila: detalle_pedido con loops=405 (uno por pedido del día) y
+--   producto_pkey con loops=811 (uno por detalle). Entre ambos suman
+--   ~4450 de los 4464 buffers leídos.
 
 
 -- ============================================================
@@ -55,52 +63,48 @@
 -- materializada, cumpliendo los 4 requisitos de desnormalización
 -- controlada (protocolo_seguridad.md, Paso 7):
 --
--- 1. Motivo medido: EXPLAIN ANALYZE de 5.2(a) — 1301.956 ms, con el
---    Nested Loop sobre detalle_pedido como nodo dominante.
+-- 1. Motivo medido: EXPLAIN ANALYZE de 5.2(a). El costo lo domina el
+--    Nested Loop, que repite 405 + 811 búsquedas por índice y crece con
+--    la cantidad de pedidos del día (4464 buffers leídos para devolver
+--    5 filas).
 --
--- 2. Único dueño del dato: un solo REFRESH MATERIALIZED VIEW
---    (ejecutado manualmente o programado) es el único mecanismo que
---    escribe mv_ventas_categoria_dia. Ningún trigger ni proceso
---    adicional la modifica.
+-- 2. Único dueño del dato: un solo REFRESH MATERIALIZED VIEW es el único
+--    mecanismo que escribe mv_ventas_categoria_dia. Ningún trigger ni
+--    proceso adicional la modifica.
 --
--- 3. Consulta de conciliación: ver 5.2(e) más abajo.
+-- 3. Consulta de conciliación: ver 5.2(e).
 --
--- 4. Documentado y reversible: este archivo documenta el patrón
---    elegido y el motivo; revertir es un DROP MATERIALIZED VIEW (la
---    fuente de verdad normalizada — pedido/detalle_pedido/producto/
---    categoria — permanece intacta, sin pérdida de información).
+-- 4. Documentado y reversible: revertir es un DROP MATERIALIZED VIEW; la
+--    fuente de verdad normalizada (pedido, detalle_pedido, producto,
+--    categoria) permanece intacta, sin pérdida de información.
 --
 -- Por qué vista materializada y no columna + trigger:
 -- - Es un reporte AGREGADO (SUM + GROUP BY + ORDER BY + LIMIT), no un
---   valor por fila. Un trigger tendría que recalcular el top-5
---   completo en cada INSERT/UPDATE de detalle_pedido — mucho más caro
---   que un refresco periódico.
--- - El panel lo consulta "muchas veces por minuto" (lectura muy
---   frecuente) y tolera una ventana chica de desactualización — no es
---   un dato crítico transaccional como el stock.
--- - Ya existe un precedente en el proyecto (mv_facturacion_categoria_mes,
---   en objects.sql) con el mismo mecanismo (índice único + REFRESH
---   CONCURRENTLY), solo que agrupado por mes en vez de por día.
+--   valor por fila. Un trigger tendría que recalcular el agregado en cada
+--   INSERT/UPDATE de detalle_pedido, mucho más caro que un refresco
+--   periódico.
+-- - El panel lo consulta "muchas veces por minuto" (lectura muy frecuente)
+--   y tolera una ventana chica de desactualización: no es un dato crítico
+--   transaccional como el stock.
+-- - Ya existe un precedente en el proyecto (mv_facturacion_categoria_mes)
+--   con el mismo mecanismo (índice único + REFRESH CONCURRENTLY), solo que
+--   agrupado por mes en vez de por día.
 --
--- Relación lectura/escritura del dato (pregunta 2 de la guía metodológica
--- de la cátedra, material "Esquemas Heredados", Sección 6): el panel de
--- administración consulta este reporte "muchas veces por minuto" (dato
--- del enunciado), mientras que detalle_pedido se escribe con la
--- frecuencia normal de altas de pedidos del sistema — un orden de
--- magnitud menor a las lecturas del panel, no un flujo de escritura
--- masivo y constante. Con lecturas muchísimo más frecuentes que las
--- escrituras, el dato es buen candidato a desnormalizar: el costo de
--- mantener la vista actualizada (un REFRESH periódico) se paga muchas
--- menos veces que el ahorro que genera en cada lectura evitada del JOIN
--- completo.
+-- Relación lectura/escritura: el panel lee el reporte muchas veces por
+-- minuto, mientras que detalle_pedido se escribe con la frecuencia normal
+-- de altas de pedidos, un orden de magnitud menor. El costo de mantener
+-- la vista al día (un REFRESH) se paga muchas menos veces que el ahorro
+-- por cada lectura que evita el join completo.
 
 
 -- ============================================================
 -- 5.2 (c) — Implementación: estructura desnormalizada + sincronización
 -- ============================================================
--- Cambio estructural (CREATE MATERIALIZED VIEW): sacar respaldo antes
--- de correr esto en copia_trabajo, según protocolo_seguridad.md Paso 3:
---   pg_dump copia_trabajo > respaldos/copia_trabajo_antes_mv_ventas_categoria_dia.sql
+-- Cambio estructural (CREATE MATERIALIZED VIEW): en copia_trabajo, que es
+-- descartable y se recrea desde plantilla_food_store, no se requirió
+-- respaldo previo (protocolo_seguridad.md, Paso 3).
+
+DROP MATERIALIZED VIEW IF EXISTS mv_ventas_categoria_dia;
 
 CREATE MATERIALIZED VIEW mv_ventas_categoria_dia AS
 SELECT
@@ -118,111 +122,118 @@ WHERE dp.eliminado = FALSE
 GROUP BY c.id, c.nombre, ped.fecha
 WITH DATA;
 
--- Índice único: requisito de Postgres para poder refrescar con CONCURRENTLY
--- (permite que las lecturas sigan viendo la versión anterior mientras se
--- recalcula la nueva, sin bloquear el panel que la consulta).
+-- Índice único: requisito de Postgres para refrescar con CONCURRENTLY
+-- (las lecturas siguen viendo la versión anterior mientras se recalcula
+-- la nueva, sin bloquear el panel que la consulta).
 CREATE UNIQUE INDEX idx_mv_ventas_categoria_dia_pk
 ON mv_ventas_categoria_dia (categoria_id, fecha);
 
--- Mecanismo de sincronización (único dueño del dato — requisito 2):
--- se refresca de forma periódica o bajo demanda con esta única sentencia.
--- En este proyecto (sin infraestructura de cron/pg_cron), el refresco se
--- documenta como manual/bajo demanda antes de cada lectura del panel, o
--- programable con pg_cron si el entorno de despliegue lo permite:
+ANALYZE mv_ventas_categoria_dia;
+
+-- Mecanismo de sincronización (único dueño del dato — requisito 2).
+-- Es la única sentencia que actualiza la vista. Se ejecuta bajo demanda o
+-- de forma programada (por ejemplo con pg_cron si el entorno de
+-- despliegue lo permite; este proyecto no tiene esa infraestructura):
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ventas_categoria_dia;
+-- Medido: 6 s 800 ms sobre copia_trabajo (~200.000 pedidos, ~400.000
+-- detalles).
 --
---   REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ventas_categoria_dia;
---
--- Ventana de inconsistencia: los datos de mv_ventas_categoria_dia están
--- actualizados "a la fecha del último REFRESH". Es una consistencia
--- eventual, aceptable para un panel de reportes (no para un dato
--- operativo crítico como el stock).
+-- Ventana de inconsistencia: los datos son los del último REFRESH. Es una
+-- consistencia eventual, aceptable para un panel de reportes (no para un
+-- dato operativo crítico como el stock). Cuanto más seguido se ejecute
+-- el REFRESH, menor la desactualización y mayor el costo de mantenimiento.
 
 
 -- ============================================================
 -- 5.2 (d) — Consulta que lee de la estructura desnormalizada
 -- ============================================================
--- Reemplaza los 3 JOIN de la consulta original por una lectura directa
--- de la vista materializada, ya agregada por categoría y fecha.
+-- Reemplaza los 3 JOIN de la consulta original por una lectura directa de
+-- la vista materializada, ya agregada por categoría y fecha.
+-- Ejecutada 3 veces seguidas; se reporta la tercera (caché caliente).
+-- Plan completo en capturas mariano/explain_despues.txt
 
-EXPLAIN ANALYZE
+EXPLAIN (ANALYZE, BUFFERS)
 SELECT categoria,
        total_vendido
 FROM mv_ventas_categoria_dia
-WHERE fecha = '2025-01-01'
+WHERE fecha = CURRENT_DATE
 ORDER BY total_vendido DESC
 LIMIT 5;
 
--- Tabla comparativa (medición real, ver Parte2-Mariano-Capturas.docx (o capturas mariano/explain_antes.txt) y
--- Parte2-Mariano-Capturas.docx (o capturas mariano/explain_despues.txt)):
+-- Comparación medida (mismo día, mismos datos, caché caliente):
 --
--- | Momento  | Execution Time | Nodo dominante                          |
--- |----------|-----------------|------------------------------------------|
--- | Antes    | 1301.956 ms     | Nested Loop (pedido -> detalle_pedido,   |
--- |          |                 | Index Scan con loops=400)                |
--- | Después  | 1.393 ms        | Bitmap Index Scan sobre                  |
--- |          |                 | idx_mv_ventas_categoria_dia_pk           |
+-- | Momento  | Execution Time | Buffers | Nodo dominante                          |
+-- |----------|----------------|---------|-----------------------------------------|
+-- | Antes    | 6.546 ms       | 4464    | Nested Loop (Index Scan repetido:       |
+-- |          |                |         | detalle_pedido loops=405, producto      |
+-- |          |                |         | loops=811)                              |
+-- | Después  | 0.106 ms       | 13      | Bitmap Index Scan sobre                 |
+-- |          |                |         | idx_mv_ventas_categoria_dia_pk          |
 --
--- Mejora: ~935x más rápido (de 1301.956 ms a 1.393 ms). El JOIN de 4
--- tablas con recorrido fila por fila de 400 pedidos se reemplaza por
--- una única lectura de índice sobre datos ya agregados.
+-- Mejora: ~62x en tiempo (6.546 / 0.106) y ~340x en bloques leídos
+-- (4464 / 13). El recorrido fila por fila de 405 pedidos y 811 detalles se
+-- reemplaza por una única lectura de índice sobre datos ya agregados.
 
 
 -- ============================================================
 -- 5.2 (e) — Script de auditoría: detección de desincronización
 -- ============================================================
 -- Requisito 3 de la desnormalización controlada (consulta de
--- conciliación). Recalcula el total real desde la fuente de verdad y
--- lo compara contra lo almacenado en la vista materializada. Debe
--- devolver 0 filas — un resultado no vacío indica que la vista no se
--- refrescó después de cambios en los datos base (deuda técnica
--- silenciosa: no es necesariamente un error de programación, puede ser
--- simplemente que faltó correr el REFRESH).
+-- conciliación). Recalcula el total desde la fuente de verdad y lo compara
+-- con lo almacenado en la vista. Usa FULL OUTER JOIN para detectar también
+-- los pares (categoría, fecha) que existen en un lado y faltan en el otro
+-- (por ejemplo, ventas nuevas todavía no reflejadas en la vista).
+-- Debe devolver 0 filas.
 --
--- Resultado real obtenido: 0 filas — la vista está sincronizada con la
--- fuente de verdad (esperable, ya que no se modificaron datos después
--- de crear mv_ventas_categoria_dia).
+-- Resultado real sobre la base migrada: 0 filas.
 
-SELECT
-    mv.categoria_id,
-    mv.fecha,
-    mv.total_vendido        AS total_almacenado,
-    real.total_vendido_real AS total_recalculado,
-    mv.total_vendido - real.total_vendido_real AS diferencia
+SELECT COALESCE(mv.categoria_id, f.categoria_id) AS categoria_id,
+       COALESCE(mv.fecha, f.fecha)               AS fecha,
+       mv.total_vendido                          AS total_almacenado,
+       f.total_vendido                           AS total_recalculado
 FROM mv_ventas_categoria_dia mv
-JOIN (
-    SELECT
-        c.id      AS categoria_id,
-        ped.fecha AS fecha,
-        SUM(dp.subtotal) AS total_vendido_real
+FULL OUTER JOIN (
+    SELECT c.id AS categoria_id, ped.fecha AS fecha, SUM(dp.subtotal) AS total_vendido
     FROM detalle_pedido dp
     JOIN producto pr ON pr.id = dp.producto_id
     JOIN categoria c ON c.id = pr.categoria_id
-    JOIN pedido ped ON ped.id = dp.pedido_id
-    WHERE dp.eliminado = FALSE
-      AND ped.eliminado = FALSE
+    JOIN pedido ped  ON ped.id = dp.pedido_id
+    WHERE dp.eliminado = FALSE AND ped.eliminado = FALSE
     GROUP BY c.id, ped.fecha
-) AS real
-  ON real.categoria_id = mv.categoria_id
- AND real.fecha = mv.fecha
-WHERE mv.total_vendido <> real.total_vendido_real;
+) f ON f.categoria_id = mv.categoria_id AND f.fecha = mv.fecha
+WHERE mv.total_vendido IS DISTINCT FROM f.total_vendido;
 
--- Antigüedad del último refresco (complementario, no reemplaza la
--- conciliación de arriba): en versiones de Postgres sin last_refresh
--- nativo para vistas materializadas, se recomienda una tabla de
--- bitácora propia que registre el timestamp de cada REFRESH ejecutado,
--- por ejemplo:
---
--- CREATE TABLE bitacora_refresh_mv (
---     mv_nombre    VARCHAR(100) NOT NULL,
---     refrescado_en TIMESTAMPTZ NOT NULL DEFAULT now()
--- );
--- -- y agregar, después de cada REFRESH:
--- INSERT INTO bitacora_refresh_mv (mv_nombre) VALUES ('mv_ventas_categoria_dia');
+-- Prueba de que la auditoría detecta una desincronización (se ejecuta
+-- dentro de una transacción que se deshace, no deja datos modificados):
+/*
+BEGIN;
+
+UPDATE detalle_pedido
+SET cantidad = cantidad + 5
+WHERE id = (
+    SELECT dp.id
+    FROM detalle_pedido dp
+    JOIN pedido p ON p.id = dp.pedido_id
+    WHERE p.fecha = CURRENT_DATE
+      AND dp.eliminado = FALSE AND p.eliminado = FALSE
+    ORDER BY dp.id
+    LIMIT 1
+);
+
+-- (acá se corre la consulta de auditoría de arriba)
+-- Resultado real: 1 fila -> categoria_id = 1, fecha = hoy,
+--   total_almacenado = 2315289.36, total_recalculado = 2367789.36
+--   (diferencia de 52500.00, el efecto de las 5 unidades agregadas que la
+--   vista todavía no refleja).
+
+ROLLBACK;
+-- Después del ROLLBACK la auditoría vuelve a devolver 0 filas.
+*/
 
 
 -- ============================================================
--- Reversión (down): elimina la estructura desnormalizada sin afectar
--- la fuente de verdad normalizada (pedido, detalle_pedido, producto,
+-- Reversión (down): elimina la estructura desnormalizada sin afectar la
+-- fuente de verdad normalizada (pedido, detalle_pedido, producto y
 -- categoria quedan intactas).
 -- ============================================================
 -- DROP MATERIALIZED VIEW IF EXISTS mv_ventas_categoria_dia;
